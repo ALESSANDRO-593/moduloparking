@@ -127,9 +127,8 @@
                 [attr.aria-label]="(user.enabled ? 'Inhabilitar a ' : 'Habilitar a ') + user.fullName"
                 (click)="toggleEnabled(user.id)"
               ><span></span></button>
-              <button class="delete-button" type="button" [attr.aria-label]="'Eliminar a ' + user.fullName" (click)="openDeleteConfirmation(user)">
+              <button class="delete-button" type="button" [attr.aria-label]="'Eliminar a ' + user.fullName" title="Eliminar usuario" (click)="openDeleteConfirmation(user)">
                 <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3m3 0-1 13H7L6 7m4 4v5m4-5v5" /></svg>
-                <span>Eliminar</span>
               </button>
               </div>
             </td>

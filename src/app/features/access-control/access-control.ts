@@ -34,6 +34,8 @@ export class AccessControl implements OnInit {
   protected readonly error = signal('');
   protected readonly feedback = signal('');
   protected readonly search = signal('');
+  protected readonly ticketSearch = signal('');
+  protected readonly ticketDropdownOpen = signal(false);
 
   protected readonly form = this.formBuilder.nonNullable.group({
     authorizationId: ['', Validators.required],
@@ -73,6 +75,25 @@ export class AccessControl implements OnInit {
       && !usersInside.has(ticket.parkingUserId));
   });
 
+  protected readonly selectableTickets = computed(() => {
+    const available = this.mode() === 'ENTRADA' ? this.validTickets() : this.insideTickets();
+    const query = this.normalizeSearch(this.ticketSearch());
+    if (!query) return available;
+
+    return available.filter(ticket => {
+      const user = this.userFor(ticket.parkingUserId);
+      const vehicle = this.vehicleFor(ticket.vehicleId);
+      return [
+        ticket.code,
+        String(ticket.id),
+        user?.fullName ?? '',
+        user?.identification ?? '',
+        vehicle?.plate ?? '',
+        ...(user?.vehicles ?? [])
+      ].some(value => this.normalizeSearch(value).includes(query));
+    });
+  });
+
   ngOnInit(): void { this.load(); }
 
   protected load(): void {
@@ -100,6 +121,8 @@ export class AccessControl implements OnInit {
 
   protected open(mode: AccessMovement): void {
     this.mode.set(mode);
+    this.ticketSearch.set('');
+    this.ticketDropdownOpen.set(false);
     this.form.reset({
       authorizationId: '', useTemporary: false, temporaryPlate: '', temporaryVehicleType: 'AUTO'
     });
@@ -151,7 +174,29 @@ export class AccessControl implements OnInit {
     return this.tickets().find(ticket => ticket.id === id);
   }
   protected vehicleFor(id: number): ParkingVehicle | undefined { return this.vehicles().find(vehicle => vehicle.id === id); }
+  protected ticketPlate(ticket: ParkingAuthorization): string {
+    return this.vehicleFor(ticket.vehicleId)?.plate
+      ?? this.userFor(ticket.parkingUserId)?.vehicles[0]
+      ?? 'Sin placa';
+  }
   protected updateSearch(event: Event): void { this.search.set((event.target as HTMLInputElement).value); }
+  protected updateTicketSearch(event: Event): void {
+    this.ticketSearch.set((event.target as HTMLInputElement).value);
+    this.form.controls.authorizationId.setValue('');
+    this.ticketDropdownOpen.set(true);
+  }
+  protected openTicketDropdown(): void {
+    this.ticketDropdownOpen.set(true);
+  }
+  protected closeTicketDropdown(event: FocusEvent): void {
+    const container = event.currentTarget as HTMLElement;
+    if (!container.contains(event.relatedTarget as Node | null)) this.ticketDropdownOpen.set(false);
+  }
+  protected selectTicket(ticket: ParkingAuthorization): void {
+    this.form.controls.authorizationId.setValue(String(ticket.id));
+    this.ticketSearch.set(`${ticket.code} · ${this.userFor(ticket.parkingUserId)?.fullName ?? 'Usuario'} · ${this.ticketPlate(ticket)}`);
+    this.ticketDropdownOpen.set(false);
+  }
   protected format(value: string): string {
     return new Intl.DateTimeFormat('es-EC', { dateStyle: 'short', timeStyle: 'short' }).format(new Date(value));
   }
@@ -169,5 +214,9 @@ export class AccessControl implements OnInit {
   private today(): string {
     const now = new Date();
     return new Date(now.getTime() - now.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
+  }
+
+  private normalizeSearch(value: string): string {
+    return value.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLocaleLowerCase('es').trim();
   }
 }

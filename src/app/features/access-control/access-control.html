@@ -36,7 +36,29 @@
     <span class="eyebrow">Control de acceso</span><h2>Registrar {{ movement === 'ENTRADA' ? 'entrada' : 'salida' }}</h2>
     <p>{{ movement === 'ENTRADA' ? 'Seleccione un ticket vigente. Cada usuario puede ocupar un solo espacio.' : 'Seleccione el vehículo que se encuentra dentro.' }}</p>
     <form [formGroup]="form" (ngSubmit)="save()">
-      <label><span>Ticket y usuario</span><select formControlName="authorizationId"><option value="">Seleccione ticket</option>@for (ticket of (movement === 'ENTRADA' ? validTickets() : insideTickets()); track ticket.id) { <option [value]="ticket.id">{{ ticket.code }} · {{ userFor(ticket.parkingUserId)?.fullName }}</option> }</select></label>
+      <div class="ticket-picker">
+        <label for="ticket-search"><span>Ticket y usuario</span></label>
+        <div class="ticket-combobox" role="combobox" aria-haspopup="listbox" [attr.aria-expanded]="ticketDropdownOpen()" (focusout)="closeTicketDropdown($event)">
+          <div class="ticket-search-field">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7" /><path d="m20 20-4-4" /></svg>
+            <input id="ticket-search" type="text" autocomplete="off" placeholder="Escriba usuario, placa o número de ticket..." [value]="ticketSearch()" (focus)="openTicketDropdown()" (input)="updateTicketSearch($event)" aria-autocomplete="list" aria-controls="ticket-options" />
+            <svg class="ticket-chevron" viewBox="0 0 24 24" aria-hidden="true"><path d="m7 10 5 5 5-5" /></svg>
+          </div>
+          @if (ticketDropdownOpen()) {
+            <div id="ticket-options" class="ticket-options" role="listbox">
+              @for (ticket of selectableTickets(); track ticket.id) {
+                <button type="button" role="option" [attr.aria-selected]="form.controls.authorizationId.value === ticket.id.toString()" (click)="selectTicket(ticket)">
+                  <strong>{{ ticket.code }} · {{ userFor(ticket.parkingUserId)?.fullName }}</strong>
+                  <span>{{ ticketPlate(ticket) }} · {{ userFor(ticket.parkingUserId)?.identification }}</span>
+                </button>
+              } @empty {
+                <div class="ticket-empty">No se encontraron tickets con ese usuario, placa o número.</div>
+              }
+            </div>
+          }
+        </div>
+        <small class="ticket-count">Escriba para filtrar {{ selectableTickets().length }} ticket(s) disponible(s).</small>
+      </div>
 
       @if (movement === 'ENTRADA') {
         @if (selectedTicket(); as ticket) {

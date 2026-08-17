@@ -139,7 +139,7 @@ tbody tr:hover { background: #fafbfc; }
 .row-actions { align-items: center; display: inline-flex; gap: 12px; justify-content: flex-end; }
 .delete-button {
   align-items: center; background: #fff; border: 1px solid #f0b4b4; color: #b42318; cursor: pointer; display: inline-flex;
-  font-size: 11px; font-weight: 800; gap: 5px; min-height: 32px; padding: 0 9px;
+  height: 32px; justify-content: center; padding: 0; width: 32px;
   &:hover { background: #fff0f0; border-color: #df7777; }
   svg { fill: none; height: 15px; stroke: currentColor; stroke-linecap: round; stroke-linejoin: round; stroke-width: 1.8; width: 15px; }
 }
