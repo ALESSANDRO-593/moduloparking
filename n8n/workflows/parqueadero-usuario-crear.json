@@ -1,0 +1,52 @@
+{
+  "name": "Parqueadero - Crear usuario",
+  "nodes": [
+    {
+      "parameters": { "httpMethod": "POST", "path": "panel/parqueadero/usuarios/crear", "responseMode": "responseNode", "options": {} },
+      "id": "a2000002-0002-4002-8002-000000000001", "name": "Webhook", "type": "n8n-nodes-base.webhook", "typeVersion": 2, "position": [-540, 0], "webhookId": "panel-parqueadero-usuario-crear"
+    },
+    {
+      "parameters": {
+        "jsCode": "const crypto=require('crypto');const fail=(statusCode,error)=>[{json:{ok:false,statusCode,error}}];const authorization=$json.headers?.authorization??'';if(!authorization.startsWith('Bearer '))return fail(401,'Sesión requerida.');const secret=$env.JWT_SECRET;if(!secret)return fail(500,'El servicio no está configurado.');try{const[header,payloadPart,signature,extra]=authorization.slice(7).trim().split('.');if(!header||!payloadPart||!signature||extra)throw new Error();const expected=crypto.createHmac('sha256',secret).update(`${header}.${payloadPart}`).digest('base64url'),left=Buffer.from(signature),right=Buffer.from(expected);if(left.length!==right.length||!crypto.timingSafeEqual(left,right))throw new Error();const payload=JSON.parse(Buffer.from(payloadPart,'base64url').toString('utf8'));if(!payload.exp||payload.exp<=Math.floor(Date.now()/1000))throw new Error();const role=String(payload.rol??'').toUpperCase(),permissions=(Array.isArray(payload.permisos)?payload.permisos:[]).map(String);if(role!=='SUPERADMIN'&&!permissions.includes('parqueadero.gestionar'))return fail(403,'No tiene permisos.');const body=$json.body??{},type=String(body.type??'').toUpperCase(),identification=String(body.identification??'').trim(),fullName=String(body.fullName??'').trim(),institutionalEmail=String(body.institutionalEmail??'').trim().toLowerCase(),sourceId=body.sourceId==null?null:Number(body.sourceId),institutional=sourceId!==null&&['ESTUDIANTE','DOCENTE'].includes(type),guest=sourceId===null&&type==='INVITADO';if(!/^\\d{10}$/.test(identification)||(!institutional&&!guest))return fail(400,'Los datos del usuario no son válidos.');if(guest&&(fullName.length<3||fullName.length>150||!/^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$/.test(institutionalEmail)))return fail(400,'Complete correctamente el nombre y el correo.');if(institutional&&(!Number.isInteger(sourceId)||sourceId<=0))return fail(400,'La persona seleccionada no es válida.');return[{json:{ok:true,type,identification,fullName,institutionalEmail,sourceId,panelUserId:Number(payload.uid??payload.sub)}}];}catch{return fail(401,'La sesión es inválida o ha vencido.');}"
+      },
+      "id": "a2000002-0002-4002-8002-000000000002", "name": "Autorizar y validar", "type": "n8n-nodes-base.code", "typeVersion": 2, "position": [-320, 0]
+    },
+    {
+      "parameters": { "conditions": { "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict" }, "conditions": [{ "id": "ok", "leftValue": "={{$json.ok}}", "rightValue": true, "operator": { "type": "boolean", "operation": "equals" } }], "combinator": "and" }, "options": {} },
+      "id": "a2000002-0002-4002-8002-000000000003", "name": "¿Solicitud autorizada?", "type": "n8n-nodes-base.if", "typeVersion": 2, "position": [-100, 0]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH candidate AS (\n  SELECT e.id AS estudiante_id,NULL::bigint AS docente_id FROM public.estudiantes e\n  WHERE $1='ESTUDIANTE' AND e.id=$5::bigint AND e.cedula=$2\n  UNION ALL\n  SELECT NULL::bigint,d.id FROM public.docentes d\n  WHERE $1='DOCENTE' AND d.id=$5::bigint AND d.cedula=$2\n), inserted AS (\n  INSERT INTO public.parqueadero_usuarios(\n    tipo_usuario,estudiante_id,docente_id,cedula_manual,nombres_manual,correo_manual,estado\n  )\n  SELECT $1,candidate.estudiante_id,candidate.docente_id,\n    CASE WHEN $1='INVITADO' THEN $2 END,\n    CASE WHEN $1='INVITADO' THEN $3 END,\n    CASE WHEN $1='INVITADO' THEN $4 END,'ACTIVO'\n  FROM (SELECT 1) seed LEFT JOIN candidate ON TRUE\n  WHERE ($1='INVITADO' OR candidate.estudiante_id IS NOT NULL OR candidate.docente_id IS NOT NULL)\n    AND NOT EXISTS(\n      SELECT 1 FROM public.parqueadero_usuarios pu\n      LEFT JOIN public.estudiantes e ON e.id=pu.estudiante_id\n      LEFT JOIN public.docentes d ON d.id=pu.docente_id\n      WHERE COALESCE(e.cedula,d.cedula,pu.cedula_manual)=$2\n    )\n  RETURNING id\n)\nSELECT TRUE AS success,id::int AS id FROM inserted;",
+        "options": { "queryReplacement": "={{[$json.type,$json.identification,$json.fullName,$json.institutionalEmail,$json.sourceId]}}" }
+      },
+      "id": "a2000002-0002-4002-8002-000000000004", "name": "Crear usuario (Postgres)", "type": "n8n-nodes-base.postgres", "typeVersion": 2.6, "position": [140, -100], "alwaysOutputData": true,
+      "credentials": { "postgres": { "id": "REEMPLAZAR", "name": "YaviBot Postgres" } }
+    },
+    {
+      "parameters": { "conditions": { "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict" }, "conditions": [{ "id": "created", "leftValue": "={{$json.success===true}}", "rightValue": true, "operator": { "type": "boolean", "operation": "equals" } }], "combinator": "and" }, "options": {} },
+      "id": "a2000002-0002-4002-8002-000000000005", "name": "¿Usuario creado?", "type": "n8n-nodes-base.if", "typeVersion": 2, "position": [380, -100]
+    },
+    {
+      "parameters": { "respondWith": "json", "responseBody": "={{$json}}", "options": { "responseCode": 201 } },
+      "id": "a2000002-0002-4002-8002-000000000006", "name": "Responder usuario creado", "type": "n8n-nodes-base.respondToWebhook", "typeVersion": 1.4, "position": [620, -180]
+    },
+    {
+      "parameters": { "respondWith": "json", "responseBody": "={{ {error:'La persona ya está registrada o los datos no son válidos.'} }}", "options": { "responseCode": 409 } },
+      "id": "a2000002-0002-4002-8002-000000000007", "name": "Responder conflicto", "type": "n8n-nodes-base.respondToWebhook", "typeVersion": 1.4, "position": [620, 0]
+    },
+    {
+      "parameters": { "respondWith": "json", "responseBody": "={{ {error:$json.error} }}", "options": { "responseCode": "={{$json.statusCode}}" } },
+      "id": "a2000002-0002-4002-8002-000000000008", "name": "Responder error", "type": "n8n-nodes-base.respondToWebhook", "typeVersion": 1.4, "position": [140, 120]
+    }
+  ],
+  "connections": {
+    "Webhook": { "main": [[{ "node": "Autorizar y validar", "type": "main", "index": 0 }]] },
+    "Autorizar y validar": { "main": [[{ "node": "¿Solicitud autorizada?", "type": "main", "index": 0 }]] },
+    "¿Solicitud autorizada?": { "main": [[{ "node": "Crear usuario (Postgres)", "type": "main", "index": 0 }], [{ "node": "Responder error", "type": "main", "index": 0 }]] },
+    "Crear usuario (Postgres)": { "main": [[{ "node": "¿Usuario creado?", "type": "main", "index": 0 }]] },
+    "¿Usuario creado?": { "main": [[{ "node": "Responder usuario creado", "type": "main", "index": 0 }], [{ "node": "Responder conflicto", "type": "main", "index": 0 }]] }
+  },
+  "pinData": {}, "settings": { "executionOrder": "v1" }, "active": false
+}

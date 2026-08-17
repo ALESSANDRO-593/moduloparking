@@ -1,0 +1,236 @@
+<header class="page-header">
+  <div>
+    <span class="eyebrow">Control financiero</span>
+    <h1>Pagos y modalidad de uso</h1>
+    <p>Registre pagos diarios o mensuales y controle su vigencia.</p>
+  </div>
+  <button class="primary-button" type="button" (click)="openRegistration()">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14m-7-7h14" /></svg>
+    Registrar pago
+  </button>
+</header>
+
+@if (feedback()) {
+  <div class="feedback" role="status"><span>✓</span>{{ feedback() }}</div>
+}
+
+@if (loadError()) {
+  <div class="api-message api-message--error" role="alert">
+    <span>{{ loadError() }}</span><button type="button" (click)="loadData()">Reintentar</button>
+  </div>
+}
+
+<section class="filter-card" aria-label="Filtros del historial de pagos">
+  <label class="search-field">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7" /><path d="m20 20-4-4" /></svg>
+    <span class="sr-only">Buscar pagos</span>
+    <input type="search" placeholder="Buscar por cédula, usuario o referencia..." (input)="updateSearch($event)" />
+  </label>
+  <label>
+    <span class="sr-only">Filtrar por modalidad</span>
+    <select (change)="updateModalityFilter($event)">
+      <option value="TODAS">Toda modalidad</option>
+      <option value="DIARIO">Diaria</option>
+      <option value="MENSUAL">Mensual</option>
+    </select>
+  </label>
+  <label>
+    <span class="sr-only">Filtrar por estado</span>
+    <select (change)="updateStatusFilter($event)">
+      <option value="TODOS">Todo estado</option>
+      <option value="APROBADO">Aprobados</option>
+      <option value="PENDIENTE">Pendientes</option>
+      <option value="RECHAZADO">Rechazados</option>
+      <option value="ANULADO">Anulados</option>
+    </select>
+  </label>
+</section>
+
+<section class="table-card">
+  <div class="table-heading">
+    <div><strong>Historial de pagos</strong><span>{{ filteredPayments().length }} registros encontrados</span></div>
+    <small>La vigencia depende de un pago aprobado y de sus fechas.</small>
+  </div>
+
+  <div class="table-scroll">
+    <table>
+      <thead>
+        <tr>
+          <th>Usuario</th>
+          <th>Modalidad</th>
+          <th>Periodo</th>
+          <th>Método</th>
+          <th>Monto</th>
+          <th>Estado</th>
+          <th>Vigencia</th>
+        </tr>
+      </thead>
+      <tbody>
+        @if (isLoading()) {
+          <tr><td class="empty-state" colspan="7"><strong>Consultando pagos...</strong><span>Espere un momento.</span></td></tr>
+        } @else {
+        @for (payment of filteredPayments(); track payment.id) {
+          @let user = userFor(payment.parkingUserId);
+          <tr>
+            <td>
+              <strong class="user-name">{{ user?.fullName ?? 'Usuario no disponible' }}</strong>
+              <span class="secondary">{{ user?.type === 'ESTUDIANTE' ? 'Estudiante' : user?.type === 'DOCENTE' ? 'Docente' : user?.type === 'INVITADO' ? 'Invitado' : 'Tipo no disponible' }} · {{ user?.identification }}</span>
+            </td>
+            <td><span class="modality-badge">{{ payment.modality === 'DIARIO' ? 'Diaria' : 'Mensual' }}</span></td>
+            <td>
+              <strong class="period">{{ formatDate(payment.startDate) }}</strong>
+              @if (payment.startDate !== payment.endDate) {
+                <span class="secondary">hasta {{ formatDate(payment.endDate) }}</span>
+              }
+            </td>
+            <td>
+              <span class="method">{{ payment.method === 'EFECTIVO' ? 'Efectivo' : 'Transferencia' }}</span>
+              @if (payment.reference) { <span class="secondary">{{ payment.reference }}</span> }
+            </td>
+            <td><strong class="amount">{{ payment.amount.toLocaleString('es-EC', { style: 'currency', currency: 'USD' }) }}</strong></td>
+            <td>
+              <span
+                class="status-badge"
+                [class.status-badge--approved]="payment.status === 'APROBADO'"
+                [class.status-badge--pending]="payment.status === 'PENDIENTE'"
+                [class.status-badge--rejected]="payment.status === 'RECHAZADO' || payment.status === 'ANULADO'"
+              >{{ payment.status === 'APROBADO' ? 'Aprobado' : payment.status === 'PENDIENTE' ? 'Pendiente' : payment.status === 'RECHAZADO' ? 'Rechazado' : 'Anulado' }}</span>
+            </td>
+            <td>
+              <span class="validity-badge" [class.validity-badge--current]="isCurrent(payment)">
+                {{ isCurrent(payment) ? 'Vigente' : 'No vigente' }}
+              </span>
+            </td>
+          </tr>
+        } @empty {
+          <tr>
+            <td class="empty-state" colspan="7">
+              @if (hasActiveFilters()) {
+                <strong>No encontramos pagos</strong><span>Prueba con otros términos o filtros.</span>
+              } @else {
+                <strong>Aún no hay pagos registrados</strong><span>Utilice “Registrar pago” para agregar el primero.</span>
+              }
+            </td>
+          </tr>
+        }
+        }
+      </tbody>
+    </table>
+  </div>
+</section>
+
+@if (isModalOpen()) {
+  <div class="modal-backdrop" role="presentation" (click)="closeRegistration()">
+    <section class="modal" role="dialog" aria-modal="true" aria-labelledby="payment-registration-title" (click)="$event.stopPropagation()">
+      <button class="close-button" type="button" aria-label="Cerrar" (click)="closeRegistration()">×</button>
+      <span class="eyebrow">Nuevo registro</span>
+      <h2 id="payment-registration-title">Registrar pago y modalidad</h2>
+      <p class="modal-description">La vigencia es de un día para modalidad diaria y de 30 días para mensual.</p>
+
+      <form [formGroup]="paymentForm" (ngSubmit)="registerPayment()">
+        <div class="form-grid">
+          <label class="full-width">
+            <span>Usuario</span>
+            <select formControlName="parkingUserId" (change)="handleUserChange($event)">
+              <option value="">Seleccione un usuario</option>
+              @for (user of availableUsers(); track user.id) {
+                <option [value]="user.id">{{ user.fullName }} · {{ user.identification }}</option>
+              }
+            </select>
+          </label>
+
+          <label>
+            <span>Modalidad</span>
+            <select formControlName="modality">
+              <option value="DIARIO">Diaria</option>
+              <option value="MENSUAL">Mensual</option>
+            </select>
+          </label>
+
+          <label>
+            <span>Fecha de uso</span>
+            <input type="date" formControlName="startDate" />
+          </label>
+
+          <div class="validity-preview full-width">
+            <span>Vigencia calculada</span>
+            <strong>{{ formatDate(paymentForm.controls.startDate.value) }} — {{ formatDate(calculatedEndDate()) }}</strong>
+            <em>{{ amountFor().toLocaleString('es-EC', { style: 'currency', currency: 'USD' }) }}</em>
+          </div>
+
+          <fieldset class="payment-methods full-width">
+            <legend>Forma de pago</legend>
+            <div class="method-options">
+              <label [class.selected]="paymentForm.controls.method.value === 'EFECTIVO'">
+                <input type="radio" value="EFECTIVO" formControlName="method" (change)="handleMethodChange()" />
+                <span class="method-icon">$</span>
+                <span><strong>Efectivo</strong><small>Registro presencial</small></span>
+              </label>
+              <label [class.selected]="paymentForm.controls.method.value === 'TRANSFERENCIA'">
+                <input type="radio" value="TRANSFERENCIA" formControlName="method" (change)="handleMethodChange()" />
+                <span class="method-icon">⇄</span>
+                <span><strong>Transferencia</strong><small>Registro digital manual</small></span>
+              </label>
+            </div>
+          </fieldset>
+
+          @if (paymentForm.controls.method.value === 'TRANSFERENCIA') {
+            <label class="full-width">
+              <span>Referencia de transferencia</span>
+              <input type="text" maxlength="120" placeholder="Número o código del comprobante" formControlName="reference" />
+            </label>
+          }
+
+          <label>
+            <span>Estado del pago</span>
+            <select formControlName="status" (change)="handleStatusChange()">
+              <option value="APROBADO">Aprobado</option>
+              <option value="PENDIENTE">Pendiente de revisión</option>
+            </select>
+          </label>
+
+          <label>
+            <span>Generar ticket</span>
+            <select formControlName="issueAuthorization">
+              <option [ngValue]="true">Sí, generar ticket</option>
+              <option [ngValue]="false">No generar todavía</option>
+            </select>
+          </label>
+
+          <label class="full-width">
+            <span>Vehículo autorizado</span>
+            <select formControlName="vehicleId" [class.placeholder]="!selectedUserId()">
+              <option value="">{{ selectedUserId() ? 'Seleccione un vehículo' : 'Seleccione primero un usuario' }}</option>
+              @for (vehicle of availableVehicles(); track vehicle.id) {
+                <option [value]="vehicle.id">{{ vehicle.plate }} · {{ vehicle.brand }} {{ vehicle.model }}</option>
+              }
+            </select>
+          </label>
+        </div>
+
+        @if (paymentForm.touched && paymentForm.invalid) {
+          <div class="form-message form-message--error">Complete correctamente todos los campos obligatorios.</div>
+        }
+
+        @if (selectedUserId() && !availableVehicles().length) {
+          <div class="form-message form-message--error">El usuario seleccionado no tiene vehículos activos.</div>
+        }
+
+        @if (mutationError()) {
+          <div class="form-message form-message--error">{{ mutationError() }}</div>
+        }
+
+        <div class="manual-note">
+          <strong>Registro administrativo:</strong> esta pantalla documenta el pago; no realiza cobros ni transferencias.
+        </div>
+
+        <div class="modal-actions">
+          <button class="cancel-button" type="button" (click)="closeRegistration()">Cancelar</button>
+          <button class="primary-button" type="submit" [disabled]="isSaving() || !availableUsers().length">
+            {{ isSaving() ? 'Guardando...' : 'Guardar pago' }}
+          </button>
+        </div>
+      </form>
+    </section>
+  </div>
+}

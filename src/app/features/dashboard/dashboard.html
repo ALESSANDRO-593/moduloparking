@@ -1,0 +1,40 @@
+<header class="page-header">
+  <div><span class="eyebrow">Panel principal</span><h1>Resumen del parqueadero</h1><p>Consulte la ocupación y los movimientos registrados durante el día.</p></div>
+  <a class="primary-button" routerLink="/accesos">Registrar movimiento</a>
+</header>
+
+@if (error()) { <div class="api-message" role="alert"><span>{{ error() }}</span><button type="button" (click)="load()">Reintentar</button></div> }
+
+<section class="metrics" aria-label="Indicadores del parqueadero">
+  <article class="metric-card metric-card--available"><span>Espacios disponibles</span><strong>{{ loading() ? '—' : access().available }}</strong><small>de {{ access().total }} espacios configurados</small></article>
+  <article class="metric-card"><span>Vehículos dentro</span><strong>{{ loading() ? '—' : access().occupied }}</strong><small>ocupación actual</small></article>
+  <article class="metric-card"><span>Ingresos del día</span><strong>{{ loading() ? '—' : todayEntries() }}</strong><small>entradas autorizadas hoy</small></article>
+</section>
+
+<section class="dashboard-grid">
+  <article class="panel tickets-panel">
+    <div class="panel-heading"><div><span class="eyebrow">Vigentes hoy</span><h2>Tickets activos</h2></div><a routerLink="/autorizaciones">Ver historial</a></div>
+    <div class="ticket-list">
+      @if (loading()) {
+        <div class="empty">Consultando tickets...</div>
+      } @else {
+        @for (ticket of activeTickets(); track ticket.id) {
+          @let user = userFor(ticket.parkingUserId);
+          <div class="ticket-row"><span class="ticket-code">{{ ticket.code }}</span><div><strong>{{ user?.fullName ?? 'Usuario no disponible' }}</strong><small>{{ ticket.modality === 'DIARIO' ? 'Diaria' : 'Mensual' }} · hasta {{ formatDate(ticket.endDate) }}</small></div><span class="status">Vigente</span></div>
+        } @empty {
+          <div class="empty">No hay tickets vigentes para hoy.</div>
+        }
+      }
+    </div>
+  </article>
+
+  <article class="panel quick-panel">
+    <div class="panel-heading"><div><span class="eyebrow">Operaciones</span><h2>Accesos rápidos</h2></div></div>
+    <nav class="quick-links" aria-label="Accesos rápidos">
+      <a routerLink="/accesos"><span>↔</span><div><strong>Entradas y salidas</strong><small>Registrar un movimiento</small></div></a>
+      <a routerLink="/pagos"><span>$</span><div><strong>Registrar pago</strong><small>Generar un nuevo ticket</small></div></a>
+      <a routerLink="/usuarios"><span>U</span><div><strong>Usuarios</strong><small>Consultar o registrar usuarios</small></div></a>
+      <a routerLink="/configuracion"><span>⚙</span><div><strong>Configuración</strong><small>Tarifas y capacidad</small></div></a>
+    </nav>
+  </article>
+</section>

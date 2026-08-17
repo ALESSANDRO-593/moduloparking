@@ -1,0 +1,77 @@
+{
+  "name": "Parqueadero - Buscar persona para registro",
+  "nodes": [
+    {
+      "parameters": { "httpMethod": "POST", "path": "panel/parqueadero/usuarios/buscar", "responseMode": "responseNode", "options": {} },
+      "id": "a1000001-0001-4001-8001-000000000001",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [-520, 0],
+      "webhookId": "panel-parqueadero-usuario-buscar"
+    },
+    {
+      "parameters": {
+        "jsCode": "const crypto = require('crypto');\nconst fail = (statusCode, error) => [{ json: { ok: false, statusCode, error } }];\nconst authorization = $json.headers?.authorization ?? '';\nif (!authorization.startsWith('Bearer ')) return fail(401, 'Sesión requerida.');\nconst secret = $env.JWT_SECRET;\nif (!secret) return fail(500, 'JWT_SECRET no está configurado.');\ntry {\n  const token = authorization.slice(7).trim();\n  const [header, payloadPart, signature, extra] = token.split('.');\n  if (!header || !payloadPart || !signature || extra) throw new Error();\n  const expected = crypto.createHmac('sha256', secret).update(`${header}.${payloadPart}`).digest('base64url');\n  const left = Buffer.from(signature);\n  const right = Buffer.from(expected);\n  if (left.length !== right.length || !crypto.timingSafeEqual(left, right)) throw new Error();\n  const payload = JSON.parse(Buffer.from(payloadPart, 'base64url').toString('utf8'));\n  if (!payload.exp || payload.exp <= Math.floor(Date.now() / 1000)) throw new Error();\n  const role = String(payload.rol ?? '').toUpperCase();\n  const permissions = (Array.isArray(payload.permisos) ? payload.permisos : []).map(String);\n  if (role !== 'SUPERADMIN' && !permissions.includes('parqueadero.gestionar')) return fail(403, 'No tiene permisos para gestionar parqueadero.');\n  const cedula = String($json.body?.cedula ?? '').trim();\n  if (!/^\\d{10}$/.test(cedula)) return fail(400, 'Ingrese una cédula válida de 10 dígitos.');\n  return [{ json: { ok: true, cedula } }];\n} catch {\n  return fail(401, 'La sesión es inválida o ha vencido.');\n}"
+      },
+      "id": "a1000001-0001-4001-8001-000000000002",
+      "name": "Autorizar y validar",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-300, 0]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict" },
+          "conditions": [{ "id": "ok", "leftValue": "={{ $json.ok }}", "rightValue": true, "operator": { "type": "boolean", "operation": "equals" } }],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "a1000001-0001-4001-8001-000000000003",
+      "name": "¿Solicitud autorizada?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [-80, 0]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT\n  (candidate.source_id IS NOT NULL) AS found,\n  EXISTS (\n    SELECT 1\n    FROM public.parqueadero_usuarios pu\n    LEFT JOIN public.estudiantes pe ON pe.id = pu.estudiante_id\n    LEFT JOIN public.docentes pd ON pd.id = pu.docente_id\n    WHERE COALESCE(pe.cedula, pd.cedula, pu.cedula_manual) = input.cedula\n  ) AS \"alreadyRegistered\",\n  CASE WHEN candidate.source_id IS NULL THEN NULL ELSE json_build_object(\n    'sourceId', candidate.source_id::int,\n    'type', candidate.user_type,\n    'identification', candidate.cedula,\n    'fullName', candidate.full_name,\n    'institutionalEmail', candidate.email\n  ) END AS person\nFROM (SELECT $1::varchar AS cedula) input\nLEFT JOIN LATERAL (\n  SELECT source_id, user_type, cedula, full_name, email\n  FROM (\n    SELECT e.id AS source_id, 'ESTUDIANTE'::varchar AS user_type, e.cedula, e.nombres AS full_name, e.correo AS email, 1 AS priority\n    FROM public.estudiantes e WHERE e.cedula = input.cedula\n    UNION ALL\n    SELECT d.id, 'DOCENTE'::varchar, d.cedula, d.nombre_docente, d.correo, 2\n    FROM public.docentes d WHERE d.cedula = input.cedula\n  ) matches\n  ORDER BY priority\n  LIMIT 1\n) candidate ON TRUE;",
+        "options": { "queryReplacement": "={{ [$json.cedula] }}" }
+      },
+      "id": "a1000001-0001-4001-8001-000000000004",
+      "name": "Buscar persona (Postgres)",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [160, -100],
+      "credentials": { "postgres": { "id": "REEMPLAZAR", "name": "YaviBot Postgres" } }
+    },
+    {
+      "parameters": { "respondWith": "json", "responseBody": "={{ $json }}", "options": { "responseCode": 200 } },
+      "id": "a1000001-0001-4001-8001-000000000005",
+      "name": "Responder búsqueda",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [400, -100]
+    },
+    {
+      "parameters": { "respondWith": "json", "responseBody": "={{ { error: $json.error } }}", "options": { "responseCode": "={{ $json.statusCode }}" } },
+      "id": "a1000001-0001-4001-8001-000000000006",
+      "name": "Responder error",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [160, 120]
+    }
+  ],
+  "connections": {
+    "Webhook": { "main": [[{ "node": "Autorizar y validar", "type": "main", "index": 0 }]] },
+    "Autorizar y validar": { "main": [[{ "node": "¿Solicitud autorizada?", "type": "main", "index": 0 }]] },
+    "¿Solicitud autorizada?": { "main": [[{ "node": "Buscar persona (Postgres)", "type": "main", "index": 0 }], [{ "node": "Responder error", "type": "main", "index": 0 }]] },
+    "Buscar persona (Postgres)": { "main": [[{ "node": "Responder búsqueda", "type": "main", "index": 0 }]] }
+  },
+  "pinData": {},
+  "settings": { "executionOrder": "v1" },
+  "active": false
+}

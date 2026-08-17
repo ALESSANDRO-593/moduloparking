@@ -1,0 +1,43 @@
+{
+  "name": "Parqueadero - Registrar entrada",
+  "nodes": [
+    {
+      "parameters": { "httpMethod": "POST", "path": "panel/parqueadero/accesos/entrada", "responseMode": "responseNode", "options": {} },
+      "id": "g2000002-0002-4002-8002-000000000001", "name": "Webhook", "type": "n8n-nodes-base.webhook", "typeVersion": 2, "position": [-540, 0], "webhookId": "panel-parqueadero-entrada"
+    },
+    {
+      "parameters": {
+        "jsCode": "const crypto=require('crypto');const fail=(statusCode,error)=>[{json:{ok:false,statusCode,error}}];try{const a=$json.headers?.authorization??'',[h,p,s,x]=a.startsWith('Bearer ')?a.slice(7).split('.'):[],secret=$env.JWT_SECRET;if(!secret||!h||!p||!s||x)throw new Error();const ex=crypto.createHmac('sha256',secret).update(`${h}.${p}`).digest('base64url'),l=Buffer.from(s),r=Buffer.from(ex);if(l.length!==r.length||!crypto.timingSafeEqual(l,r))throw new Error();const payload=JSON.parse(Buffer.from(p,'base64url').toString());if(!payload.exp||payload.exp<=Date.now()/1000)throw new Error();const role=String(payload.rol??'').toUpperCase(),perms=(payload.permisos??[]).map(v=>String(v).toLowerCase());if(role!=='SUPERADMIN'&&!perms.includes('parqueadero.gestionar'))return fail(403,'No tiene permisos.');const body=$json.body??{},authorizationId=Number(body.authorizationId),panelUserId=Number(payload.uid??payload.sub),useTemporary=body.useTemporary===true,temporaryPlate=String(body.temporaryPlate??'').trim().toUpperCase(),temporaryVehicleType=String(body.temporaryVehicleType??'').toUpperCase();if(!Number.isInteger(authorizationId)||authorizationId<=0)return fail(400,'Seleccione un ticket válido.');if(!Number.isInteger(panelUserId)||panelUserId<=0)return fail(401,'La sesión no identifica al usuario del panel.');if(useTemporary&&(!/^[A-Z0-9-]{5,15}$/.test(temporaryPlate)||!['AUTO','MOTO'].includes(temporaryVehicleType)))return fail(400,'Ingrese la placa y el tipo del vehículo temporal.');return[{json:{ok:true,authorizationId,panelUserId,useTemporary,temporaryPlate,temporaryVehicleType}}];}catch{return fail(401,'Sesión inválida.');}"
+      },
+      "id": "g2000002-0002-4002-8002-000000000002", "name": "Autorizar y validar", "type": "n8n-nodes-base.code", "typeVersion": 2, "position": [-320, 0]
+    },
+    {
+      "parameters": { "conditions": { "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict" }, "conditions": [{ "id": "ok", "leftValue": "={{$json.ok}}", "rightValue": true, "operator": { "type": "boolean", "operation": "equals" } }], "combinator": "and" }, "options": {} },
+      "id": "g2000002-0002-4002-8002-000000000003", "name": "¿Autorizado?", "type": "n8n-nodes-base.if", "typeVersion": 2, "position": [-100, 0]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH cfg AS MATERIALIZED (\n  SELECT capacidad_total FROM public.parqueadero_configuracion WHERE id=1 FOR UPDATE\n), auth AS (\n  SELECT pa.id,pa.parqueadero_usuario_id,pm.tipo_vehiculo AS tipo_autorizado\n  FROM public.parqueadero_autorizaciones pa\n  JOIN public.parqueadero_usuarios pu ON pu.id=pa.parqueadero_usuario_id\n  JOIN public.parqueadero_pagos pp ON pp.id=pa.pago_id\n  JOIN public.parqueadero_modalidades pm ON pm.id=pp.modalidad_id\n  WHERE pa.id=$1::bigint AND pa.estado='VIGENTE' AND pp.estado='APROBADO'\n    AND pu.estado='ACTIVO' AND CURRENT_DATE BETWEEN pa.fecha_inicio AND pa.fecha_fin\n), habitual AS (\n  SELECT a.*,v.id AS vehiculo_id,v.placa\n  FROM auth a\n  LEFT JOIN LATERAL (\n    SELECT id,placa FROM public.parqueadero_vehiculos\n    WHERE parqueadero_usuario_id=a.parqueadero_usuario_id AND activo=TRUE\n    ORDER BY es_principal DESC,id LIMIT 1\n  ) v ON TRUE\n), latest AS MATERIALIZED (\n  SELECT DISTINCT ON(parqueadero_usuario_id) parqueadero_usuario_id,tipo_movimiento,UPPER(COALESCE(placa_observada,'')) AS placa_observada\n  FROM public.parqueadero_accesos WHERE estado_validacion='AUTORIZADO'\n  ORDER BY parqueadero_usuario_id,fecha_hora DESC,id DESC\n), occupancy AS (\n  SELECT count(*)::int AS total FROM latest WHERE tipo_movimiento='ENTRADA'\n), eligible AS (\n  SELECT h.* FROM habitual h CROSS JOIN cfg CROSS JOIN occupancy o\n  WHERE h.vehiculo_id IS NOT NULL\n    AND NOT EXISTS (SELECT 1 FROM latest l WHERE l.parqueadero_usuario_id=h.parqueadero_usuario_id AND l.tipo_movimiento='ENTRADA')\n    AND o.total<cfg.capacidad_total\n    AND (NOT $3::boolean OR $5=h.tipo_autorizado)\n    AND (NOT $3::boolean OR NOT EXISTS (SELECT 1 FROM public.parqueadero_vehiculos pv WHERE UPPER(pv.placa)=UPPER($4)))\n    AND (NOT $3::boolean OR NOT EXISTS (SELECT 1 FROM latest l WHERE l.tipo_movimiento='ENTRADA' AND l.placa_observada=UPPER($4)))\n), inserted_temp AS (\n  INSERT INTO public.parqueadero_vehiculos_temporales(\n    parqueadero_usuario_id,autorizacion_id,vehiculo_habitual_id,placa_temporal,tipo_vehiculo,\n    fecha_inicio,fecha_fin,registrado_por\n  )\n  SELECT parqueadero_usuario_id,id,vehiculo_id,UPPER($4),$5,CURRENT_DATE,CURRENT_DATE,$2::bigint\n  FROM eligible WHERE $3::boolean\n  RETURNING id\n), inserted_access AS (\n  INSERT INTO public.parqueadero_accesos(\n    parqueadero_usuario_id,autorizacion_id,vehiculo_id,vehiculo_temporal_id,placa_observada,\n    tipo_movimiento,estado_validacion,usuario_control_id\n  )\n  SELECT e.parqueadero_usuario_id,e.id,CASE WHEN $3::boolean THEN NULL ELSE e.vehiculo_id END,\n    t.id,CASE WHEN $3::boolean THEN UPPER($4) ELSE UPPER(e.placa) END,\n    'ENTRADA','AUTORIZADO',$2::bigint\n  FROM eligible e LEFT JOIN inserted_temp t ON TRUE\n  WHERE NOT $3::boolean OR t.id IS NOT NULL\n  RETURNING id\n)\nSELECT COALESCE((SELECT TRUE FROM inserted_access),FALSE) AS success,\n  (SELECT id::int FROM inserted_access) AS id,\n  CASE\n    WHEN NOT EXISTS(SELECT 1 FROM cfg) THEN 'Configure la capacidad del parqueadero.'\n    WHEN NOT EXISTS(SELECT 1 FROM auth) THEN 'El ticket no está vigente o el usuario está inactivo.'\n    WHEN NOT EXISTS(SELECT 1 FROM habitual WHERE vehiculo_id IS NOT NULL) THEN 'El usuario no tiene un vehículo habitual activo.'\n    WHEN EXISTS(SELECT 1 FROM habitual h JOIN latest l ON l.parqueadero_usuario_id=h.parqueadero_usuario_id WHERE l.tipo_movimiento='ENTRADA') THEN 'El usuario ya tiene un vehículo dentro del parqueadero.'\n    WHEN (SELECT total FROM occupancy)>=(SELECT capacidad_total FROM cfg) THEN 'No hay espacios disponibles.'\n    WHEN $3::boolean AND $5<>(SELECT tipo_autorizado FROM auth) THEN 'El vehículo temporal debe ser del tipo cubierto por el ticket.'\n    WHEN $3::boolean AND EXISTS(SELECT 1 FROM public.parqueadero_vehiculos WHERE UPPER(placa)=UPPER($4)) THEN 'La placa indicada ya está registrada como vehículo habitual.'\n    WHEN $3::boolean AND EXISTS(SELECT 1 FROM latest WHERE tipo_movimiento='ENTRADA' AND placa_observada=UPPER($4)) THEN 'La placa temporal ya se encuentra dentro del parqueadero.'\n    ELSE 'No fue posible registrar la entrada.'\n  END AS error,\n  CASE WHEN EXISTS(SELECT 1 FROM inserted_access) THEN 201 ELSE 409 END AS \"statusCode\";",
+        "options": { "queryReplacement": "={{[$json.authorizationId,$json.panelUserId,$json.useTemporary,$json.temporaryPlate,$json.temporaryVehicleType]}}" }
+      },
+      "id": "g2000002-0002-4002-8002-000000000004", "name": "Registrar entrada (Postgres)", "type": "n8n-nodes-base.postgres", "typeVersion": 2.6, "position": [140, -100], "alwaysOutputData": true,
+      "credentials": { "postgres": { "id": "REEMPLAZAR", "name": "YaviBot Postgres" } }
+    },
+    {
+      "parameters": { "respondWith": "json", "responseBody": "={{$json.success?{success:true,id:$json.id}:{error:$json.error}}}", "options": { "responseCode": "={{$json.statusCode}}" } },
+      "id": "g2000002-0002-4002-8002-000000000005", "name": "Responder", "type": "n8n-nodes-base.respondToWebhook", "typeVersion": 1.4, "position": [430, -100]
+    },
+    {
+      "parameters": { "respondWith": "json", "responseBody": "={{ {error:$json.error} }}", "options": { "responseCode": "={{$json.statusCode}}" } },
+      "id": "g2000002-0002-4002-8002-000000000006", "name": "Responder error", "type": "n8n-nodes-base.respondToWebhook", "typeVersion": 1.4, "position": [140, 120]
+    }
+  ],
+  "connections": {
+    "Webhook": { "main": [[{ "node": "Autorizar y validar", "type": "main", "index": 0 }]] },
+    "Autorizar y validar": { "main": [[{ "node": "¿Autorizado?", "type": "main", "index": 0 }]] },
+    "¿Autorizado?": { "main": [[{ "node": "Registrar entrada (Postgres)", "type": "main", "index": 0 }], [{ "node": "Responder error", "type": "main", "index": 0 }]] },
+    "Registrar entrada (Postgres)": { "main": [[{ "node": "Responder", "type": "main", "index": 0 }]] }
+  },
+  "pinData": {}, "settings": { "executionOrder": "v1" }, "active": false
+}

@@ -1,0 +1,52 @@
+{
+  "name": "Parqueadero - Registrar pago",
+  "nodes": [
+    {
+      "parameters": { "httpMethod": "POST", "path": "panel/parqueadero/pagos/crear", "responseMode": "responseNode", "options": {} },
+      "id": "c3000003-0003-4003-8003-000000000001", "name": "Webhook", "type": "n8n-nodes-base.webhook", "typeVersion": 2, "position": [-540, 0], "webhookId": "panel-parqueadero-pago-crear"
+    },
+    {
+      "parameters": {
+        "jsCode": "const crypto=require('crypto'); const fail=(statusCode,error)=>[{json:{ok:false,statusCode,error}}]; const authorization=$json.headers?.authorization??''; if(!authorization.startsWith('Bearer ')) return fail(401,'Sesión requerida.'); const secret=$env.JWT_SECRET; if(!secret) return fail(500,'JWT_SECRET no está configurado.');\ntry {\n const token=authorization.slice(7).trim(); const [h,p,s,x]=token.split('.'); if(!h||!p||!s||x) throw new Error(); const expected=crypto.createHmac('sha256',secret).update(`${h}.${p}`).digest('base64url'); const left=Buffer.from(s),right=Buffer.from(expected); if(left.length!==right.length||!crypto.timingSafeEqual(left,right)) throw new Error(); const payload=JSON.parse(Buffer.from(p,'base64url').toString('utf8')); if(!payload.exp||payload.exp<=Math.floor(Date.now()/1000)) throw new Error(); const role=String(payload.rol??payload.role??'').toUpperCase(); const permissions=(Array.isArray(payload.permisos)?payload.permisos:[]).map(v=>String(v).toLowerCase()); if(role!=='SUPERADMIN'&&!permissions.includes('parqueadero.gestionar')) return fail(403,'No tiene permisos para gestionar parqueadero.');\n const body=$json.body??{}; const parkingUserId=Number(body.parkingUserId); const vehicleId=Number(body.vehicleId); const modality=String(body.modality??'').toUpperCase(); const startDate=String(body.startDate??''); const method=String(body.method??'').toUpperCase(); const status=String(body.status??'').toUpperCase(); const issueAuthorization=body.issueAuthorization===true && status==='APROBADO'; const reference=method==='TRANSFERENCIA'?String(body.reference??'').trim():null; const panelUserId=Number(payload.uid??payload.sub);\n if(!Number.isInteger(parkingUserId)||parkingUserId<=0||!Number.isInteger(vehicleId)||vehicleId<=0) return fail(400,'Seleccione un usuario y vehículo válidos.'); if(!['DIARIO','MENSUAL'].includes(modality)) return fail(400,'Seleccione una modalidad válida.'); if(!/^\\d{4}-\\d{2}-\\d{2}$/.test(startDate)||Number.isNaN(Date.parse(`${startDate}T00:00:00Z`))) return fail(400,'Seleccione una fecha válida.'); if(!['EFECTIVO','TRANSFERENCIA'].includes(method)) return fail(400,'Seleccione una forma de pago válida.'); if(!['PENDIENTE','APROBADO'].includes(status)) return fail(400,'Seleccione un estado de pago válido.'); if(method==='TRANSFERENCIA'&&(!reference||reference.length>120)) return fail(400,'Ingrese una referencia de transferencia válida.'); if(!Number.isInteger(panelUserId)||panelUserId<=0) return fail(401,'La sesión no identifica al usuario del panel.');\n return [{json:{ok:true,parkingUserId,vehicleId,modality,startDate,method,reference,status,issueAuthorization,panelUserId}}];\n} catch { return fail(401,'La sesión es inválida o ha vencido.'); }"
+      },
+      "id": "c3000003-0003-4003-8003-000000000002", "name": "Autorizar y validar", "type": "n8n-nodes-base.code", "typeVersion": 2, "position": [-320, 0]
+    },
+    {
+      "parameters": { "conditions": { "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict" }, "conditions": [{ "id": "ok", "leftValue": "={{ $json.ok }}", "rightValue": true, "operator": { "type": "boolean", "operation": "equals" } }], "combinator": "and" }, "options": {} },
+      "id": "c3000003-0003-4003-8003-000000000003", "name": "¿Solicitud autorizada?", "type": "n8n-nodes-base.if", "typeVersion": 2, "position": [-100, 0]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH eligible AS (\n  SELECT pu.id AS user_id, pv.tipo_vehiculo\n  FROM public.parqueadero_usuarios pu\n  JOIN public.parqueadero_vehiculos pv ON pv.id = $2::bigint\n    AND pv.parqueadero_usuario_id = pu.id\n    AND pv.activo = TRUE\n  WHERE pu.id = $1::bigint AND pu.estado = 'ACTIVO'\n), configured_modality AS (\n  SELECT pm.id, pm.modalidad, pm.precio\n  FROM public.parqueadero_modalidades pm\n  JOIN eligible e ON e.tipo_vehiculo = pm.tipo_vehiculo\n  WHERE pm.modalidad = $3 AND pm.activo = TRUE AND pm.precio IS NOT NULL\n), inserted_payment AS (\n  INSERT INTO public.parqueadero_pagos (\n    parqueadero_usuario_id, modalidad_id, monto, metodo_pago, referencia, fecha_pago,\n    fecha_inicio, fecha_fin, estado, registrado_por\n  )\n  SELECT\n    e.user_id, cm.id, cm.precio, $5, NULLIF($6, ''), now(), $4::date,\n    CASE WHEN cm.modalidad = 'MENSUAL' THEN $4::date + 29 ELSE $4::date END,\n    $7, $9::bigint\n  FROM eligible e\n  CROSS JOIN configured_modality cm\n  RETURNING id, parqueadero_usuario_id, fecha_inicio, fecha_fin, estado, monto\n), inserted_authorization AS (\n  INSERT INTO public.parqueadero_autorizaciones (parqueadero_usuario_id, pago_id, fecha_inicio, fecha_fin, estado)\n  SELECT parqueadero_usuario_id, id, fecha_inicio, fecha_fin, 'VIGENTE'\n  FROM inserted_payment\n  WHERE estado = 'APROBADO' AND $8::boolean = TRUE\n  RETURNING id, codigo\n)\nSELECT\n  COALESCE((SELECT TRUE FROM inserted_payment LIMIT 1), FALSE) AS success,\n  (SELECT id::int FROM inserted_payment LIMIT 1) AS id,\n  (SELECT monto::double precision FROM inserted_payment LIMIT 1) AS amount,\n  (SELECT id::int FROM inserted_authorization LIMIT 1) AS \"authorizationId\",\n  (SELECT codigo::text FROM inserted_authorization LIMIT 1) AS \"authorizationCode\",\n  CASE\n    WHEN NOT EXISTS (SELECT 1 FROM eligible) THEN 'El usuario o vehículo no existe, está inactivo o no corresponde al usuario.'\n    WHEN NOT EXISTS (SELECT 1 FROM configured_modality) THEN 'No existe una tarifa activa para esta modalidad y tipo de vehículo.'\n    ELSE NULL\n  END AS error,\n  CASE\n    WHEN NOT EXISTS (SELECT 1 FROM eligible) THEN 404\n    WHEN NOT EXISTS (SELECT 1 FROM configured_modality) THEN 409\n    ELSE 201\n  END AS \"statusCode\";",
+        "options": { "queryReplacement": "={{ [$json.parkingUserId, $json.vehicleId, $json.modality, $json.startDate, $json.method, $json.reference, $json.status, $json.issueAuthorization, $json.panelUserId] }}" }
+      },
+      "id": "c3000003-0003-4003-8003-000000000004", "name": "Registrar pago (Postgres)", "type": "n8n-nodes-base.postgres", "typeVersion": 2.6, "position": [140, -100],
+      "credentials": { "postgres": { "id": "REEMPLAZAR", "name": "YaviBot Postgres" } }
+    },
+    {
+      "parameters": { "conditions": { "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict" }, "conditions": [{ "id": "created", "leftValue": "={{ $json.success }}", "rightValue": true, "operator": { "type": "boolean", "operation": "equals" } }], "combinator": "and" }, "options": {} },
+      "id": "c3000003-0003-4003-8003-000000000005", "name": "¿Pago registrado?", "type": "n8n-nodes-base.if", "typeVersion": 2, "position": [380, -100]
+    },
+    {
+      "parameters": { "respondWith": "json", "responseBody": "={{ { success: true, id: $json.id, amount: $json.amount, authorizationId: $json.authorizationId, authorizationCode: $json.authorizationId ? 'YV-' + String($json.authorizationId).padStart(6, '0') : null } }}", "options": { "responseCode": 201 } },
+      "id": "c3000003-0003-4003-8003-000000000006", "name": "Responder pago", "type": "n8n-nodes-base.respondToWebhook", "typeVersion": 1.4, "position": [620, -180]
+    },
+    {
+      "parameters": { "respondWith": "json", "responseBody": "={{ { error: $json.error } }}", "options": { "responseCode": "={{ $json.statusCode }}" } },
+      "id": "c3000003-0003-4003-8003-000000000007", "name": "Responder conflicto", "type": "n8n-nodes-base.respondToWebhook", "typeVersion": 1.4, "position": [620, 0]
+    },
+    {
+      "parameters": { "respondWith": "json", "responseBody": "={{ { error: $json.error } }}", "options": { "responseCode": "={{ $json.statusCode }}" } },
+      "id": "c3000003-0003-4003-8003-000000000008", "name": "Responder error", "type": "n8n-nodes-base.respondToWebhook", "typeVersion": 1.4, "position": [140, 120]
+    }
+  ],
+  "connections": {
+    "Webhook": { "main": [[{ "node": "Autorizar y validar", "type": "main", "index": 0 }]] },
+    "Autorizar y validar": { "main": [[{ "node": "¿Solicitud autorizada?", "type": "main", "index": 0 }]] },
+    "¿Solicitud autorizada?": { "main": [[{ "node": "Registrar pago (Postgres)", "type": "main", "index": 0 }], [{ "node": "Responder error", "type": "main", "index": 0 }]] },
+    "Registrar pago (Postgres)": { "main": [[{ "node": "¿Pago registrado?", "type": "main", "index": 0 }]] },
+    "¿Pago registrado?": { "main": [[{ "node": "Responder pago", "type": "main", "index": 0 }], [{ "node": "Responder conflicto", "type": "main", "index": 0 }]] }
+  },
+  "pinData": {}, "settings": { "executionOrder": "v1" }, "active": false
+}
