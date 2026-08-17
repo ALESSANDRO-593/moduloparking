@@ -77,4 +77,24 @@ export class ParkingPaymentsService {
       request
     );
   }
+
+  approve(paymentId: number, startDate: string): Observable<PaymentMutationResponse> {
+    if (environment.useMocks) {
+      const payment = this.mockPayments.find(item => item.id === paymentId);
+      if (!payment || payment.status !== 'PENDIENTE') {
+        throw new Error('El pago no está pendiente.');
+      }
+      const endDate = new Date(`${startDate}T00:00:00Z`);
+      if (payment.modality === 'MENSUAL') endDate.setUTCDate(endDate.getUTCDate() + 29);
+      payment.status = 'APROBADO';
+      payment.startDate = startDate;
+      payment.endDate = endDate.toISOString().slice(0, 10);
+      payment.authorizationIssued = true;
+      return of({ success: true, id: payment.id, authorizationId: payment.id });
+    }
+    return this.api.patch<PaymentMutationResponse, { id: number; startDate: string }>(
+      N8N_WEBHOOKS.parkingPaymentApprove,
+      { id: paymentId, startDate }
+    );
+  }
 }

@@ -15,6 +15,7 @@ parqueadero. No modifica los workflows del chatbot ni de tickets ya desplegados.
 - `GET /webhook/panel/parqueadero/pagos/catalogos`
 - `GET /webhook/panel/parqueadero/pagos`
 - `POST /webhook/panel/parqueadero/pagos/crear`
+- `PATCH /webhook/panel/parqueadero/pagos/aprobar`
 - `GET /webhook/panel/parqueadero/tickets`
 - `GET /webhook/panel/parqueadero/accesos`
 - `POST /webhook/panel/parqueadero/accesos/entrada`
@@ -41,6 +42,7 @@ Los workflows de pagos son:
 - `workflows/parqueadero-pagos-catalogos.json`
 - `workflows/parqueadero-pagos-listar.json`
 - `workflows/parqueadero-pago-crear.json`
+- `workflows/parqueadero-pago-aprobar.json`
 
 Antes de probarlos, ejecute `sql/002-parqueadero-modalidades-precios.sql` para
 completar únicamente las tarifas que todavía estén en `NULL`.

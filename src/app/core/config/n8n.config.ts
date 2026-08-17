@@ -11,6 +11,7 @@ export const N8N_WEBHOOKS = {
   parkingPaymentsCatalogs: 'panel/parqueadero/pagos/catalogos',
   parkingPaymentsList: 'panel/parqueadero/pagos',
   parkingPaymentCreate: 'panel/parqueadero/pagos/crear',
+  parkingPaymentApprove: 'panel/parqueadero/pagos/aprobar',
   parkingTariffsList: 'panel/parqueadero/configuracion/tarifas',
   parkingTariffCreate: 'panel/parqueadero/configuracion/tarifas/crear',
   parkingTariffUpdate: 'panel/parqueadero/configuracion/tarifas/actualizar',

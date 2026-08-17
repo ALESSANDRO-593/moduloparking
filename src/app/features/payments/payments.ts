@@ -44,6 +44,7 @@ export class Payments implements OnInit {
   protected readonly mutationError = signal('');
   protected readonly isLoading = signal(true);
   protected readonly isSaving = signal(false);
+  protected readonly pendingPayment = signal<ParkingPayment | null>(null);
 
   protected readonly paymentForm = this.formBuilder.nonNullable.group({
     parkingUserId: ['', Validators.required],
@@ -54,6 +55,9 @@ export class Payments implements OnInit {
     status: ['APROBADO' as Extract<ParkingPaymentStatus, 'PENDIENTE' | 'APROBADO'>, Validators.required],
     issueAuthorization: [true, Validators.required],
     vehicleId: ['', Validators.required]
+  });
+  protected readonly approvalForm = this.formBuilder.nonNullable.group({
+    startDate: [this.todayIso(), Validators.required]
   });
 
   protected readonly availableUsers = computed(() => this.parkingUsers().filter(user => user.enabled));
@@ -126,7 +130,40 @@ export class Payments implements OnInit {
   protected closeRegistration(): void { if (!this.isSaving()) this.isModalOpen.set(false); }
 
   @HostListener('document:keydown.escape')
-  protected closeOnEscape(): void { if (this.isModalOpen()) this.closeRegistration(); }
+  protected closeOnEscape(): void {
+    if (this.isSaving()) return;
+    if (this.pendingPayment()) this.closeApproval();
+    else if (this.isModalOpen()) this.closeRegistration();
+  }
+
+  protected openApproval(payment: ParkingPayment): void {
+    this.pendingPayment.set(payment);
+    this.approvalForm.reset({ startDate: this.todayIso() });
+    this.mutationError.set('');
+  }
+
+  protected closeApproval(): void {
+    if (!this.isSaving()) this.pendingPayment.set(null);
+  }
+
+  protected approvePendingPayment(): void {
+    const payment = this.pendingPayment();
+    if (!payment || this.approvalForm.invalid) return;
+    this.isSaving.set(true);
+    this.mutationError.set('');
+    this.paymentsService.approve(payment.id, this.approvalForm.controls.startDate.value).subscribe({
+      next: () => {
+        this.isSaving.set(false);
+        this.pendingPayment.set(null);
+        this.feedback.set('Pago aprobado y ticket generado correctamente.');
+        this.loadData();
+      },
+      error: error => {
+        this.isSaving.set(false);
+        this.mutationError.set(error.error?.error ?? 'No fue posible aprobar el pago y generar el ticket.');
+      }
+    });
+  }
 
   protected handleUserChange(event: Event): void {
     const value = (event.target as HTMLSelectElement).value;

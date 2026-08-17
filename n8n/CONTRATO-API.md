@@ -215,6 +215,21 @@ aprobado y `issueAuthorization` es `true`, el ticket se crea en la misma
 operación de base de datos. Una transferencia puede registrarse como pendiente
 sin integración bancaria.
 
+## Aprobar un pago pendiente y generar ticket
+
+```http
+PATCH /webhook/panel/parqueadero/pagos/aprobar
+Content-Type: application/json
+```
+
+```json
+{ "id": 15, "startDate": "2026-08-17" }
+```
+
+Aprueba el pago pendiente, actualiza su periodo de vigencia desde la fecha
+indicada y genera el ticket en una sola operación. Responde `409` cuando el pago
+ya fue procesado, ya tiene ticket o el usuario está inhabilitado.
+
 ## Configuración de tarifas
 
 ```http

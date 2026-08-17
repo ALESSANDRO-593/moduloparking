@@ -63,11 +63,12 @@
           <th>Monto</th>
           <th>Estado</th>
           <th>Vigencia</th>
+          <th class="align-right">Acción</th>
         </tr>
       </thead>
       <tbody>
         @if (isLoading()) {
-          <tr><td class="empty-state" colspan="7"><strong>Consultando pagos...</strong><span>Espere un momento.</span></td></tr>
+          <tr><td class="empty-state" colspan="8"><strong>Consultando pagos...</strong><span>Espere un momento.</span></td></tr>
         } @else {
         @for (payment of filteredPayments(); track payment.id) {
           @let user = userFor(payment.parkingUserId);
@@ -101,10 +102,19 @@
                 {{ isCurrent(payment) ? 'Vigente' : 'No vigente' }}
               </span>
             </td>
+            <td class="align-right">
+              @if (payment.status === 'PENDIENTE') {
+                <button class="complete-payment-button" type="button" (click)="openApproval(payment)">Registrar pago y ticket</button>
+              } @else if (payment.authorizationIssued) {
+                <span class="ticket-issued">Ticket generado</span>
+              } @else {
+                <span class="secondary">Sin acción</span>
+              }
+            </td>
           </tr>
         } @empty {
           <tr>
-            <td class="empty-state" colspan="7">
+            <td class="empty-state" colspan="8">
               @if (hasActiveFilters()) {
                 <strong>No encontramos pagos</strong><span>Prueba con otros términos o filtros.</span>
               } @else {
@@ -118,6 +128,32 @@
     </table>
   </div>
 </section>
+
+@if (pendingPayment(); as payment) {
+  @let user = userFor(payment.parkingUserId);
+  <div class="modal-backdrop" role="presentation" (click)="closeApproval()">
+    <section class="modal approval-modal" role="dialog" aria-modal="true" aria-labelledby="approval-title" (click)="$event.stopPropagation()">
+      <button class="close-button" type="button" aria-label="Cerrar" (click)="closeApproval()">×</button>
+      <span class="eyebrow">Pago pendiente</span>
+      <h2 id="approval-title">Registrar pago y generar ticket</h2>
+      <p class="modal-description">Confirme la fecha desde la que tendrá vigencia el acceso. El pago pendiente será aprobado y el ticket se generará automáticamente.</p>
+      <div class="approval-summary">
+        <div><span>Usuario</span><strong>{{ user?.fullName }}</strong></div>
+        <div><span>Modalidad</span><strong>{{ payment.modality === 'DIARIO' ? 'Diaria' : 'Mensual' }}</strong></div>
+        <div><span>Monto</span><strong>{{ payment.amount.toLocaleString('es-EC', { style: 'currency', currency: 'USD' }) }}</strong></div>
+        <div><span>Referencia</span><strong>{{ payment.reference || 'Sin referencia' }}</strong></div>
+      </div>
+      <form [formGroup]="approvalForm" (ngSubmit)="approvePendingPayment()">
+        <label class="approval-date"><span>Inicio de vigencia</span><input type="date" formControlName="startDate" /></label>
+        @if (mutationError()) { <div class="form-message form-message--error" role="alert">{{ mutationError() }}</div> }
+        <div class="modal-actions">
+          <button class="cancel-button" type="button" (click)="closeApproval()">Cancelar</button>
+          <button class="primary-button" type="submit" [disabled]="isSaving()">{{ isSaving() ? 'Procesando...' : 'Confirmar pago y generar ticket' }}</button>
+        </div>
+      </form>
+    </section>
+  </div>
+}
 
 @if (isModalOpen()) {
   <div class="modal-backdrop" role="presentation" (click)="closeRegistration()">
